@@ -22,6 +22,12 @@ NSString *const NSPOSIXErrorDomain = @"NSPOSIXErrorDomain";
 NSString *const NSOSStatusErrorDomain = @"NSOSStatusErrorDomain";
 NSString *const NSMachErrorDomain = @"NSMachErrorDomain";
 NSString *const NSUnderlyingErrorKey = @"NSUnderlyingError";
+// Unlike every other NS...ErrorKey here, this constant's VALUE keeps its "Key" suffix. Measured from
+// Apple's own error descriptions, which print the userInfo dictionary key verbatim:
+// `UserInfo={NSMultipleUnderlyingErrorsKey=( ... )}` on a real device (Apple Developer Forums thread
+// 815631), and swift-foundation's own reader of this key hardcodes the same literal
+// (swift-foundation/Sources/FoundationEssentials/Error/CocoaError.swift: "NSMultipleUnderlyingErrorsKey").
+NSString *const NSMultipleUnderlyingErrorsKey = @"NSMultipleUnderlyingErrorsKey";
 NSString *const NSLocalizedDescriptionKey = @"NSLocalizedDescription";
 NSString *const NSLocalizedFailureReasonErrorKey = @"NSLocalizedFailureReason";
 NSString *const NSLocalizedRecoverySuggestionErrorKey = @"NSLocalizedRecoverySuggestion";
