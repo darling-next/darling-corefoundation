@@ -1519,3 +1519,56 @@ static NSString *_getDescription(id obj, id locale, int level)
 }
 
 @end
+
+/* NSConstantDictionary is the class of the dictionaries the compiler emits for
+ * constant (literal) collections; in Apple's CoreFoundation it is one of the
+ * exported constant-collection classes (CoreFoundation.tbd: objc-classes
+ * NSConstantDictionary, objc-ivars NSConstantDictionary._count, ._keys,
+ * ._objects, ._options).  Clients reference the CLASS OBJECT by name --
+ * xcodebuild imports _OBJC_CLASS_$_NSConstantDictionary, checked against the
+ * client's own bytes with `llvm-nm -m <client> | grep NSConstant` -- and dyld
+ * stops with "Symbol not found: _OBJC_CLASS_$_NSConstantDictionary / Expected in
+ * CoreFoundation" without it.  The ivars match Apple's declared names, and their
+ * ORDER is the one Apple's own instances use: scanning every __DATA_CONST slot
+ * bound to _OBJC_CLASS_$_NSConstantDictionary across the Xcode images shows the
+ * word after the isa is ALWAYS 1 (an option/kind field), then the count, then
+ * the two parallel arrays -- e.g. MTLToolsShaderProfiler: 1, 8, ptr, ptr;
+ * LoggingSupportHost: 1, 3, ptr, ptr; xcodebuild: 1, 1, ptr, ptr.  The .tbd
+ * lists the ivar NAMES but not their order, so the instances are the evidence.
+ * The keys and values are compile-time constants: they are neither retained nor
+ * copied (which is what _options would ask for on an ordinary dictionary) and
+ * never released.  Deliberately NOT CF_PRIVATE: it is an exported symbol in
+ * Apple's CoreFoundation. */
+@interface NSConstantDictionary : NSDictionary {
+    NSUInteger _options;
+    NSUInteger _count;
+    const id *_keys;
+    const id *_objects;
+}
+@end
+
+@implementation NSConstantDictionary
+
+- (NSUInteger)count
+{
+    return _count;
+}
+
+- (id)objectForKey:(id)aKey
+{
+    for (NSUInteger idx = 0; idx < _count; idx++)
+    {
+        if (_keys[idx] == aKey || [_keys[idx] isEqual:aKey])
+        {
+            return (id)_objects[idx];
+        }
+    }
+    return nil;
+}
+
+- (NSEnumerator *)keyEnumerator
+{
+    return [[[NSArray alloc] initWithObjects:_keys count:_count] objectEnumerator];
+}
+
+@end

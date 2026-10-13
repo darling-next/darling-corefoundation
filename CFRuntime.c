@@ -139,6 +139,32 @@ extern void __HALT(void);
 static CFTypeID __kCFNotATypeTypeID = _kCFRuntimeNotATypeID;
 id __NSDictionary0__, __NSArray0__;
 
+/*
+ * The empty-collection singletons also exist as OBJECTS in static storage,
+ * under the names __NSArray0__struct and __NSDictionary0__struct.  Apple's
+ * CoreFoundation exports both pairs -- CoreFoundation.tbd lists ___NSArray0__,
+ * ___NSArray0__struct, ___NSDictionary0__ and ___NSDictionary0__struct --
+ * because clang's empty-collection literal lowering references the singleton
+ * OBJECT: the ADDRESS of the __struct symbol is the array or the dictionary,
+ * while __NSArray0__/__NSDictionary0__ above are the pointer variables that
+ * point at that storage.  A client that needs the object cannot be satisfied by
+ * the variables alone: DVTSystemPrerequisites imports __NSArray0__struct, and
+ * dyld stops with "Symbol not found: ___NSArray0__struct / Expected in
+ * /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation".
+ *
+ * The spelling is load-bearing, exactly as with the os_log entry points: the
+ * name is checked against the client's own bytes with
+ * `llvm-nm -m <client> | grep NSArray0`, which reports the Mach-O name
+ * __NSArray0__struct (two leading underscores, one more than the C name), never
+ * three.  The storage is filled in __CFInitialize below.
+ */
+struct __CFEmptyCollectionStorage {
+    void *isa;
+    uintptr_t reserved[15];
+};
+struct __CFEmptyCollectionStorage __NSArray0__struct;
+struct __CFEmptyCollectionStorage __NSDictionary0__struct;
+
 #if !defined (__cplusplus)
 static const CFRuntimeClass __CFNotATypeClass = {
     0,
@@ -902,6 +928,29 @@ CF_PRIVATE Boolean __CFInitialized = 0;
 // move the next 2 lines down into the #if below, and make it static, after Foundation gets off this symbol on other platforms
 CF_EXPORT pthread_t _CFMainPThread;
 pthread_t _CFMainPThread = kNilPthreadT;
+
+/* Construct `cls` in `storage`, so that the symbol living at `storage` IS an
+ * object of that class, initialised the same way an ordinary instance is.
+ * Loud on the two conditions that would make the published symbol a lie: an
+ * instance that does not fit the storage, and an -init that hands back a
+ * different object (which would leave the storage a dead object and the symbol
+ * reporting success it did not perform).  Lives here, after the
+ * <objc/runtime.h> and <objc/message.h> includes above. */
+static id __CFSingletonInStaticStorage(Class cls, void *storage, size_t storageSize, const char *symbolName) {
+    size_t need = class_getInstanceSize(cls);
+    if (need > storageSize) {
+        fprintf(stderr, "CoreFoundation: %s: %s needs %zu bytes, its static storage holds %zu\n",
+                symbolName, class_getName(cls), need, storageSize);
+        __HALT();
+    }
+    id placed = objc_msgSend(objc_constructInstance(cls, storage), sel_registerName("init"));
+    if (placed != (id)storage) {
+        fprintf(stderr, "CoreFoundation: %s: -init returned %p, not the static storage %p\n",
+                symbolName, (void *)placed, storage);
+        __HALT();
+    }
+    return placed;
+}
 #if DEPLOYMENT_TARGET_WINDOWS || DEPLOYMENT_TARGET_IPHONESIMULATOR
 
 CF_EXPORT pthread_t _CF_pthread_main_thread_np(void);
@@ -1007,6 +1056,26 @@ void __CFInitialize(void) {
 
         extern char __CFConstantStringClassReference;
         __CFConstantStringClassReferencePtr = &__CFConstantStringClassReference;
+        /* NOTHING WRITES THROUGH THIS POINTER, and that is the measured result, not an omission.
+         *
+         * MEASURED: in this image the reference IS the class object -- `llvm-nm CoreFoundation` prints
+         * `_OBJC_CLASS_$___NSCFConstantString` and `___CFConstantStringClassReference` at the SAME address
+         * (0x1faac8) -- so a store into it overwrites the class's ISA. That is exactly what a previous version of
+         * this file did: it looked NSConstantString up by name and stored it here, after which the guest's own
+         * runtime reported `object_getClassName(__NSCFConstantString) == NSConstantString`, `initialize` was
+         * resolved through the INSTANCE method chain (so `+initialize` was unreachable), and the class threw
+         * "unrecognized selector" out of its own initialization. Measured in the log:
+         *   INITIALIZE: ...: calling +[__NSCFConstantString initialize]
+         *   EXCEPTIONS: throwing ... (object ..., a NSException)
+         *   3 -[NSObject(NSObject) doesNotRecognizeSelector:]  <- the INSTANCE variant
+         *   6 CALLING_SOME_+initialize_METHOD
+         *   objc[...]: INITIALIZE: ...: +[__NSCFConstantString initialize] threw an exception
+         *
+         * AND NOTHING NEEDS TO BE STORED. An Apple-built client's literal is a bind to this symbol, so dyld gives it
+         * the symbol's ADDRESS -- the class object -- which is what a constant string's isa has to be. Measured in
+         * xcodebuild: `[isa(bind __CFConstantStringClassReference), flags=0x7c8, cstr, len]`. The reference is
+         * therefore already the answer, and `__CFConstantStringClassReferencePtr` above is left as the hook it
+         * always was. */
 
         /*** _CFRuntimeCreateInstance() can finally be called generally after this line. ***/
         __CFRuntimeClassTableCount = 7;
@@ -1163,14 +1232,30 @@ void __CFInitialize(void) {
 
         __CFProphylacticAutofsAccess = false;
 
-        Class clsDict, clsArray;
+        Class clsDict, clsArray, clsConstantArray, arrayClass;
         SEL selAlloc, selInit;
+        id dynDict, dynArray;
         clsDict = objc_lookUpClass("NSDictionary");
         clsArray = objc_lookUpClass("NSArray");
+        clsConstantArray = objc_lookUpClass("NSConstantArray");
         selAlloc = sel_registerName("alloc");
         selInit = sel_registerName("init");
-        __NSDictionary0__ = objc_msgSend(objc_msgSend(clsDict, selAlloc), selInit);
-        __NSArray0__ = objc_msgSend(objc_msgSend(clsArray, selAlloc), selInit);
+        /* The singletons live in static storage: __NSArray0__struct and
+         * __NSDictionary0__struct must BE the objects, because clients
+         * reference them by address (see the comment at their definition).
+         * The empty ARRAY is an NSConstantArray, as in Apple's CoreFoundation,
+         * where that constant-collection class owns the singleton; the empty
+         * dictionary keeps the class its cluster hands back.  The dynamic
+         * instance is created only to learn that class. */
+        dynDict = objc_msgSend(objc_msgSend(clsDict, selAlloc), selInit);
+        if (clsConstantArray != Nil) {
+            arrayClass = clsConstantArray;
+        } else {
+            dynArray = objc_msgSend(objc_msgSend(clsArray, selAlloc), selInit);
+            arrayClass = object_getClass(dynArray);
+        }
+        __NSDictionary0__ = __CFSingletonInStaticStorage(object_getClass(dynDict), &__NSDictionary0__struct, sizeof(__NSDictionary0__struct), "__NSDictionary0__struct");
+        __NSArray0__ = __CFSingletonInStaticStorage(arrayClass, &__NSArray0__struct, sizeof(__NSArray0__struct), "__NSArray0__struct");
 
         __CFInitializing = 0;
         __CFInitialized = 1;

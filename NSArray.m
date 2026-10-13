@@ -55,6 +55,27 @@ CF_PRIVATE
 - (id)initWithObject:(NSArray *)object;
 @end
 
+/* NSConstantArray is the class of the arrays the compiler emits for constant
+ * (literal) collections, and in Apple's CoreFoundation it is also the class of
+ * the empty-array singleton -- the object the __NSArray0__struct symbol names.
+ * Clients reference the CLASS OBJECT: DVTSystemPrerequisites imports
+ * _OBJC_CLASS_$_NSConstantArray, strong, bound to CoreFoundation (checked
+ * against the client's own bytes with `llvm-nm -m <client> | grep
+ * NSConstantArray`, which reports the Mach-O name with the _OBJC_CLASS_$_
+ * prefix), and dyld stops with "Symbol not found: _OBJC_CLASS_$_NSConstantArray
+ * / Expected in CoreFoundation" without it.
+ *
+ * The ivars match the names Apple's CoreFoundation.tbd declares (objc-ivars:
+ * NSConstantArray._count, NSConstantArray._objects), so an instance laid out by
+ * an Apple-built client -- including a static constant array in its data -- is
+ * read with the right offsets.  Deliberately NOT CF_PRIVATE: it is an exported
+ * symbol in Apple's CoreFoundation. */
+@interface NSConstantArray : NSArray {
+    NSUInteger _count;
+    const id *_objects;
+}
+@end
+
 @implementation NSMutableArray (Mutation)
 
 - (void)_mutate
@@ -2192,6 +2213,43 @@ SINGLETON_RR()
 - (NSUInteger)count
 {
     return _used;
+}
+
+@end
+
+@implementation NSConstantArray
+
+/* A constant array holds _count ids at _objects; the ids are compile-time
+ * constants, so they are neither retained nor released here.  The empty-array
+ * singleton (__NSArray0__struct, built in CFRuntime.c) is one of these with
+ * _count == 0 and _objects == NULL. */
+
+- (NSUInteger)count
+{
+    return _count;
+}
+
+- (id)objectAtIndex:(NSUInteger)index
+{
+    if (index < _count)
+    {
+        return (id)_objects[index];
+    }
+    [NSException raise:NSRangeException format:@"%d is out of bounds of array", index];
+    return nil;
+}
+
+- (void)getObjects:(id __unsafe_unretained [])objects range:(NSRange)range
+{
+    if (NSMaxRange(range) > _count)
+    {
+        [NSException raise:NSRangeException format:@"range {%d, %d} is out of bounds of array", range.location, range.length];
+        return;
+    }
+    if (range.length != 0)
+    {
+        memmove(objects, _objects + range.location, sizeof(id) * range.length);
+    }
 }
 
 @end
