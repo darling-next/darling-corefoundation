@@ -1549,6 +1549,17 @@ static NSString *_getDescription(id obj, id locale, int level)
 
 @implementation NSConstantDictionary
 
+/* IMMORTAL, for the same measured reason as NSConstantArray: the instances are
+ * compile-time constants in static storage (the empty-dictionary singleton
+ * __NSDictionary0__struct in CoreFoundation's __DATA, and every compiler-emitted
+ * literal in its client's __DATA), so a release must be a no-op and must never
+ * reach -dealloc -- which would free storage the allocator never handed out.
+ * A class that implements none of the retain/release family is "default RR" to
+ * objc4, and its release then frees the object in the runtime.  See the comment
+ * at NSConstantArray for the measured abort. */
+
+SINGLETON_RR()
+
 - (NSUInteger)count
 {
     return _count;

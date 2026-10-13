@@ -1232,21 +1232,32 @@ void __CFInitialize(void) {
 
         __CFProphylacticAutofsAccess = false;
 
-        Class clsDict, clsArray, clsConstantArray, arrayClass;
+        Class clsDict, clsArray, clsConstantArray, clsConstantDict, arrayClass, dictClass;
         SEL selAlloc, selInit;
         id dynDict, dynArray;
         clsDict = objc_lookUpClass("NSDictionary");
         clsArray = objc_lookUpClass("NSArray");
         clsConstantArray = objc_lookUpClass("NSConstantArray");
+        clsConstantDict = objc_lookUpClass("NSConstantDictionary");
         selAlloc = sel_registerName("alloc");
         selInit = sel_registerName("init");
         /* The singletons live in static storage: __NSArray0__struct and
          * __NSDictionary0__struct must BE the objects, because clients
          * reference them by address (see the comment at their definition).
-         * The empty ARRAY is an NSConstantArray, as in Apple's CoreFoundation,
-         * where that constant-collection class owns the singleton; the empty
-         * dictionary keeps the class its cluster hands back.  The dynamic
-         * instance is created only to learn that class. */
+         * Both are CONSTANT-collection instances, as in Apple's CoreFoundation,
+         * where those classes own the empty-collection singletons -- and that
+         * is load-bearing, not cosmetic: the constant classes are the immortal
+         * ones (SINGLETON_RR in NSArray.m/NSDictionary.m), and a release of a
+         * singleton must be a no-op.  MEASURED with the array singleton on the
+         * class its cluster hands back: _objc_release found no custom RR,
+         * reached retain count zero and freed the singleton's static storage
+         * (libmalloc's "pointer being freed was not allocated" abort inside
+         * Xcode3Core's package-resolution block).  The dictionary's cluster
+         * class cannot be made immortal the same way -- __NSCFDictionary is
+         * shared with live dictionaries, and its own retain/release route to
+         * CFRetain/CFRelease -- so the singleton takes the constant class.
+         * The dynamic instances are created only as the fallback for a tree in
+         * which a constant class is missing. */
         dynDict = objc_msgSend(objc_msgSend(clsDict, selAlloc), selInit);
         if (clsConstantArray != Nil) {
             arrayClass = clsConstantArray;
@@ -1254,7 +1265,12 @@ void __CFInitialize(void) {
             dynArray = objc_msgSend(objc_msgSend(clsArray, selAlloc), selInit);
             arrayClass = object_getClass(dynArray);
         }
-        __NSDictionary0__ = __CFSingletonInStaticStorage(object_getClass(dynDict), &__NSDictionary0__struct, sizeof(__NSDictionary0__struct), "__NSDictionary0__struct");
+        if (clsConstantDict != Nil) {
+            dictClass = clsConstantDict;
+        } else {
+            dictClass = object_getClass(dynDict);
+        }
+        __NSDictionary0__ = __CFSingletonInStaticStorage(dictClass, &__NSDictionary0__struct, sizeof(__NSDictionary0__struct), "__NSDictionary0__struct");
         __NSArray0__ = __CFSingletonInStaticStorage(arrayClass, &__NSArray0__struct, sizeof(__NSArray0__struct), "__NSArray0__struct");
 
         __CFInitializing = 0;

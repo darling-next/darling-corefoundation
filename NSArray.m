@@ -2222,7 +2222,29 @@ SINGLETON_RR()
 /* A constant array holds _count ids at _objects; the ids are compile-time
  * constants, so they are neither retained nor released here.  The empty-array
  * singleton (__NSArray0__struct, built in CFRuntime.c) is one of these with
- * _count == 0 and _objects == NULL. */
+ * _count == 0 and _objects == NULL.
+ *
+ * IMMORTAL, because its instances live in STATIC storage: the empty-array
+ * singleton in CoreFoundation's __DATA and every compiler-emitted literal in
+ * its client's __DATA.  MEASURED without the RR methods below: the Xcode ladder
+ * (scripts/xcodebuild-workload-run.sh, both workloads) dies in Xcode3Core's
+ * -[Xcode3CommandLineBuildTool _resolvePackageDependenciesAndExit] block, which
+ * calls _objc_release (libobjc + 0x6a00) on the singleton; a class that
+ * implements none of retain/release/autorelease/retainCount is "default RR" to
+ * objc4, so the runtime decremented the isa's retain count to zero, sent
+ * -dealloc and freed the storage with the guest's free():
+ *
+ *   #3 free + 0x25d   #4 Xcode3Core + 0x3af97 (after `callq *%r15`, r15 = _objc_release)
+ *   xcodebuild(...) malloc: *** error for object 0x7b65ca1d84b8: pointer being freed was not allocated
+ *
+ * where 0x7b65ca1d84b8 is `___NSArray0__struct` itself.  On macOS the empty
+ * collection is an immortal constant collection and the same release is a
+ * no-op, so the release the client is entitled to make must not reach -dealloc
+ * here either.  SINGLETON_RR is the convention this tree already uses for
+ * objects in static storage (__NSCFConstantString, NSNull, the collection
+ * placeholders). */
+
+SINGLETON_RR()
 
 - (NSUInteger)count
 {
