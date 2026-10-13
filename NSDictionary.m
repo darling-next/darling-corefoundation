@@ -28,12 +28,18 @@ CF_EXPORT CFDataRef _CFPropertyListCreateXMLData(CFAllocatorRef allocator, CFPro
 
 @interface NSDictionary (Internal)
 + (id)newWithContentsOf:(id)source immutable:(BOOL)immutable;
+// The error-returning variant reports WHY the contents could not be read (a file read failure as
+// NSCocoaErrorDomain/NSFileRead*, a property list failure as the property list's own CFError). It is
+// implemented in Foundation, beside the reader it belongs to, and consumed by the error-returning
+// public initializers below.
++ (id)newWithContentsOf:(id)source immutable:(BOOL)immutable error:(NSError **)error;
 @end
 
 CF_PRIVATE
 @interface __NSPlaceholderDictionary : NSMutableDictionary
 + (id)mutablePlaceholder;
 + (id)immutablePlaceholder;
+- (id)initWithContentsOfURL:(NSURL *)url error:(NSError **)error;
 @end
 
 CF_PRIVATE
@@ -277,6 +283,21 @@ SINGLETON_RR()
     return (id)[NSDictionary newWithContentsOf:path immutable:(self == immutablePlaceholder)];
 }
 
+// Same reader and same immutability rule as the URL initializer above, with the failure's own error
+// handed to the caller instead of an invented one. This is the path
+// +[NSDictionary dictionaryWithContentsOfURL:error:] takes, so a bare string stays rejected here as
+// it is for the non-error variant.
+- (id)initWithContentsOfURL:(NSURL *)url error:(NSError **)error
+{
+    if (url != nil && [url isNSString__])
+    {
+        @throw [NSException exceptionWithName:NSInvalidArgumentException reason:@"sent NSString to initWithContentsOfURL - please send a URL" userInfo:nil];
+        return nil;
+    }
+
+    return (id)[NSDictionary newWithContentsOf:url immutable:(self == immutablePlaceholder) error:error];
+}
+
 - (id)init
 {
     if (self == mutablePlaceholder)
@@ -506,13 +527,13 @@ SINGLETON_RR()
 
 + (instancetype)dictionaryWithContentsOfURL:(NSURL *)url error:(NSError **)error
 {
-    // TODO: we should actually pass along any error we get to the user so they have more info
-    // this is just a quick and dirty implementation
-    NSDictionary* tmp = [self dictionaryWithContentsOfURL:url];
-    if (tmp == nil) {
-        *error = [NSError errorWithDomain:@"NSDictionaryErrorDomain" code:-1 userInfo:nil];
-    }
-    return tmp;
+    // Forward the failure's OWN error. The reader knows why it could not produce a dictionary (the
+    // failed read's errno as NSCocoaErrorDomain/NSFileRead*, or the property list's CFError) and a
+    // caller acts on it: DVTFoundation's +[DVTToolsVersion setCurrentBetaVersionFromPlistFile:]
+    // tolerates exactly NSCocoaErrorDomain/NSFileReadNoSuchFileError for a plist that is legitimately
+    // absent (Xcode ships no Contents/Resources/BetaVersion.plist) and asserts on anything else, so an
+    // invented domain killed xcodebuild through the assertion handler's ud2.
+    return [[[self alloc] initWithContentsOfURL:url error:error] autorelease];
 }
 
 - (id)initWithObjectsAndKeys:(id)firstObject, ...
@@ -731,11 +752,12 @@ SINGLETON_RR()
 
 - (id)initWithContentsOfURL:(NSURL *)url error:(NSError **)error
 {
-    NSDictionary* tmp = [self initWithContentsOfURL:url];
-    if (tmp == nil) {
-        *error = [NSError errorWithDomain:@"NSDictionaryErrorDomain" code:-1 userInfo:nil];
-    }
-    return tmp;
+    // Reached only by a receiver that is not the placeholder -- __NSPlaceholderDictionary answers this
+    // selector itself, as it does -initWithContentsOfURL: -- so the rule is the one the
+    // non-error initializer a few lines above uses, and the receiver is released as there.
+    BOOL immutable = ![self isKindOfClass:[NSMutableDictionary class]];
+    [self release];
+    return [NSDictionary newWithContentsOf:url immutable:immutable error:error];
 }
 
 @end
