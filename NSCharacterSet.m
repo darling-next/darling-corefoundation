@@ -95,6 +95,32 @@ CF_PRIVATE
     return (id)CFCharacterSetGetPredefined(kCFCharacterSetNewline);
 }
 
+/*
+ * +[NSCharacterSet URLPathAllowedCharacterSet] -- Apple's NSCharacterSet(NSURLUtilities)
+ * predefined set for a URL's path component (Foundation.framework/Headers/NSURL.h, available
+ * macOS 10.9+). This tree never carried the URL component sets: no sibling accessor exists in
+ * this file and nothing in the deployed CoreFoundation defines _CFURLComponentsGetURL*AllowedCharacterSet
+ * (CFURLComponents_URIParser.c from the swift-corelibs-foundation submodule is not in the CF build).
+ * The membership is therefore taken from that submodule's own
+ * CoreFoundation/URL.subproj/CFURLComponents_URIParser.c, kURLPathAllowedCharacters:
+ * "!$&'()*+,-./0123456789:=@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~"
+ * (unreserved marks, "/" as the segment separator, ":" and "@" which the parser special-cases,
+ * and ";" deliberately absent for rfc1808 compatibility), so this is the same set Apple's
+ * CFURLComponents hands out. Apple's accessor answers a shared, immutable set; the CF object is
+ * immutable once created and is cached for the process, so the contract holds.
+ */
++ (id)URLPathAllowedCharacterSet
+{
+    static dispatch_once_t once = 0L;
+    static NSCharacterSet *set = nil;
+    dispatch_once(&once, ^{
+        set = (NSCharacterSet *)CFCharacterSetCreateWithCharactersInString(
+            kCFAllocatorDefault,
+            CFSTR("!$&'()*+,-./0123456789:=@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~"));
+    });
+    return set;
+}
+
 + (id)characterSetWithRange:(NSRange)range
 {
     return [(NSCharacterSet *)CFCharacterSetCreateWithCharactersInRange(kCFAllocatorDefault, CFRangeMake(range.location, range.length)) autorelease];
