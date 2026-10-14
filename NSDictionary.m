@@ -7,6 +7,12 @@
 
 #import <Foundation/NSDictionary.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <stddef.h>
+#include <dlfcn.h>
+#include <objc/runtime.h>
+
 #import <CoreFoundation/CFData.h>
 #import <CoreFoundation/CFPropertyList.h>
 #import <Foundation/NSArray.h>
@@ -212,6 +218,79 @@ static CFDictionaryValueCallBacks sNSCFDictionaryValueCallBacks = {
 static __NSPlaceholderDictionary *mutablePlaceholder = nil;
 static __NSPlaceholderDictionary *immutablePlaceholder = nil;
 
+// DIAGNOSTIC (env-gated, silent unless DARLING_NSDICTIONARY_NIL_DIAG is set).  A dictionary built with
+// a nil member is a real defect, but the count-based constructor's exception says only "nil object" and
+// the caller's own stack names the CONSTRUCTOR, never the entry -- so the reason the defect happened is
+// not visible from the crash alone.  With the variable set this prints, to stderr, the index that is
+// nil, the count, the sibling key and every key's class/name (which identifies WHICH entry was handed a
+// nil), and the caller chain (image + symbol via dladdr) so the producer is named rather than guessed.
+// Off and silent otherwise; see evidence/nsdictionary-nil-object-rung/ for the measurement it produced.
+static BOOL _darlingDictNilDiag(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *v = getenv("DARLING_NSDICTIONARY_NIL_DIAG");
+        on = (v != NULL && v[0] != '\0') ? 1 : 0;
+    }
+    return on != 0;
+}
+
+static void _darlingDictPrintOne(const char *tag, NSUInteger idx, id obj)
+{
+    char desc[512];
+    desc[0] = '\0';
+    if (obj != nil && [obj respondsToSelector:@selector(description)]) {
+        // Go through -description and -UTF8String (plain message sends) rather than naming the
+        // NSString class: a class reference emits `.objc_class_name_NSString` under the i386 legacy
+        // ABI and the fat link then fails on that undefined symbol.
+        id d = [obj description];
+        if (d != nil && [d respondsToSelector:@selector(UTF8String)]) {
+            const char *u = (const char *)[d UTF8String];
+            snprintf(desc, sizeof(desc), " \"%.300s\"", u != NULL ? u : "<?>");
+        }
+    }
+    fprintf(stderr, "DARLING-NSDICTIONARY-NIL:   %s[%lu] class=%s%s\n", tag,
+            (unsigned long)idx, obj != nil ? object_getClassName(obj) : "<nil>", desc);
+}
+
+static void _darlingDictPrintCallers(void)
+{
+    void *ras[6];
+    ras[0] = __builtin_return_address(0);
+    ras[1] = __builtin_return_address(1);
+    ras[2] = __builtin_return_address(2);
+    ras[3] = __builtin_return_address(3);
+    ras[4] = __builtin_return_address(4);
+    ras[5] = __builtin_return_address(5);
+    for (int i = 0; i < 6; i++) {
+        Dl_info info;
+        if (ras[i] != NULL && dladdr(ras[i], &info) && info.dli_fname != NULL) {
+            ptrdiff_t off = (const char *)ras[i] - (const char *)info.dli_fbase;
+            fprintf(stderr, "DARLING-NSDICTIONARY-NIL:   caller[%d] %s + 0x%lx (%s)\n", i,
+                    info.dli_fname, (unsigned long)off,
+                    info.dli_sname != NULL ? info.dli_sname : "?");
+        } else {
+            fprintf(stderr, "DARLING-NSDICTIONARY-NIL:   caller[%d] %p (unresolved)\n", i, ras[i]);
+        }
+    }
+}
+
+static void _darlingDictNilReport(const char *which, NSUInteger idx, NSUInteger cnt,
+                                  const id *objects, const id *keys)
+{
+    if (!_darlingDictNilDiag()) {
+        return;
+    }
+    fprintf(stderr, "DARLING-NSDICTIONARY-NIL: %s is nil at idx=%lu count=%lu\n", which,
+            (unsigned long)idx, (unsigned long)cnt);
+    for (NSUInteger i = 0; i < cnt; i++) {
+        _darlingDictPrintOne("object", i, objects != NULL ? objects[i] : nil);
+        _darlingDictPrintOne("key", i, keys != NULL ? keys[i] : nil);
+    }
+    _darlingDictPrintCallers();
+    fflush(stderr);
+}
+
 @implementation __NSPlaceholderDictionary
 
 + (void)initialize
@@ -346,12 +425,14 @@ SINGLETON_RR()
     {
         if (objects[idx] == nil)
         {
+            _darlingDictNilReport("object", idx, cnt, objects, keys);
             [self release];
             [NSException raise:NSInvalidArgumentException format:@"Tried to init dictionary with nil object"];
             return nil;
         }
         if (keys[idx] == nil)
         {
+            _darlingDictNilReport("key", idx, cnt, objects, keys);
             [self release];
             [NSException raise:NSInvalidArgumentException format:@"Tried to init dictionary with nil key"];
             return nil;
