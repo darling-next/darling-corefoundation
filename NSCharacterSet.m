@@ -121,6 +121,31 @@ CF_PRIVATE
     return set;
 }
 
+/*
+ * +[NSCharacterSet URLQueryAllowedCharacterSet] -- the sibling of the path set above, for a URL's
+ * query component (Foundation.framework/Headers/NSURL.h, available macOS 10.9+).  It is one of the
+ * two sets the workload's images reference (IDEFoundation and DVTSourceControl load
+ * URLQueryAllowedCharacterSet, both of them also loading
+ * -stringByAddingPercentEncodingWithAllowedCharacters:); the other four URL sets are referenced by no
+ * image in the load closure and are not added here.
+ *
+ * The membership is the same authority as the path set's: the swift-corelibs-foundation submodule's
+ * CoreFoundation/URL.subproj/CFURLComponents_URIParser.c, kURLQueryAllowedCharacters
+ * "!$&'()*+,-./0123456789:;=?@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~" (the query set
+ * keeps ';', ':' and '?' that the path set drops or conditions).  Built and cached the same way.
+ */
++ (id)URLQueryAllowedCharacterSet
+{
+    static dispatch_once_t once = 0L;
+    static NSCharacterSet *set = nil;
+    dispatch_once(&once, ^{
+        set = (NSCharacterSet *)CFCharacterSetCreateWithCharactersInString(
+            kCFAllocatorDefault,
+            CFSTR("!$&'()*+,-./0123456789:;=?@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~"));
+    });
+    return set;
+}
+
 + (id)characterSetWithRange:(NSRange)range
 {
     return [(NSCharacterSet *)CFCharacterSetCreateWithCharactersInRange(kCFAllocatorDefault, CFRangeMake(range.location, range.length)) autorelease];
