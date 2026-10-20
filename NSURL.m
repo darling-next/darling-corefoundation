@@ -605,6 +605,19 @@ static inline CFMutableDictionaryRef CFURLResourceInfo(CFURLRef url)
 
     if (resourceInfo == NULL)
     {
+        // The first read happened before this lock, so another thread may have
+        // installed the dictionary in between.  Re-read under the lock: the
+        // compare-and-swap in __CFURLSetResourceInfoPtr refuses to replace an
+        // existing value, so creating here would leave the field pointing at
+        // the other thread's dictionary while this call releases its own and
+        // then retains it after it is already freed (measured: intermittent
+        // heap corruption and messages to stale objects while xcodebuild's
+        // DVTFileDataType code queried URL properties from several threads).
+        resourceInfo = (CFMutableDictionaryRef)__CFURLResourceInfoPtr(url);
+    }
+
+    if (resourceInfo == NULL)
+    {
         resourceInfo = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, &kCFCopyStringDictionaryKeyCallBacks, &nullSafeCallbacks);
         __CFURLSetResourceInfoPtr(url, resourceInfo); // retains the info
         CFRelease(resourceInfo);
