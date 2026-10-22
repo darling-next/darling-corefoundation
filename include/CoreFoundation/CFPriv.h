@@ -61,6 +61,11 @@ CF_EXPORT intptr_t _CFDoOperation(intptr_t code, intptr_t subcode1, intptr_t sub
 
 CF_EXPORT void _CFRuntimeSetCFMPresent(void *a);
 
+/* TRUE when obj is an ObjC object rather than a CF object of typeID's bridged class. Exported for the
+ * Foundation-side accessors that must tell a CFURL from an NSURL subclass without comparing class
+ * identity (the two trees register different class objects under the same name). */
+CF_EXPORT Boolean _CFIsObjC(CFTypeID typeID, void *obj);
+
 CF_EXPORT const char *_CFProcessPath(void);
 CF_EXPORT const char **_CFGetProcessPath(void);
 CF_EXPORT const char **_CFGetProgname(void);
