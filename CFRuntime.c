@@ -555,8 +555,6 @@ static CFTypeRef _CFRetain(CFTypeRef cf, Boolean tryR);
 #define CF_RING_FRAMES 10
 static struct {
     void *cf;
-    uint64_t w0;   // the header word CF reads as the isa
-    uint64_t w1;   // the next word: on a CF object this is _cfinfo/_rc
     void *ret;
     void *frames[CF_RING_FRAMES];
     int nframes;
@@ -572,8 +570,7 @@ static void _cfRingDump(int sig) {
         const char *img = "?";
         void *off = NULL;
         if (dladdr(_cfRing[i].ret, &fi) && fi.dli_fname) { img = fi.dli_fname; off = (void *)((char *)_cfRing[i].ret - (char *)fi.dli_fbase); }
-        dprintf(2, "[cf-ring] signal=%d cf=%p w0=%016llx w1=%016llx caller=%s+%p\n", sig, _cfRing[i].cf,
-                (unsigned long long)_cfRing[i].w0, (unsigned long long)_cfRing[i].w1, img, off);
+        dprintf(2, "[cf-ring] signal=%d cf=%p caller=%s+%p\n", sig, _cfRing[i].cf, img, off);
         for (int f = 0; f < _cfRing[i].nframes; f++) {
             Dl_info x;
             if (dladdr(_cfRing[i].frames[f], &x) && x.dli_fname)
@@ -591,8 +588,6 @@ static void _cfRingRecord(CFTypeRef cf) {
     }
     int i = _cfRingNext;
     _cfRing[i].cf = (void *)cf;
-    _cfRing[i].w0 = ((const uint64_t *)cf)[0];
-    _cfRing[i].w1 = ((const uint64_t *)cf)[1];
     _cfRing[i].ret = __builtin_return_address(0);
     _cfRing[i].nframes = backtrace(_cfRing[i].frames, CF_RING_FRAMES);
     _cfRingNext = (i + 1) % CF_RING_SLOTS;
