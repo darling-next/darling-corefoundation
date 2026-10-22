@@ -551,6 +551,15 @@ static CFTypeRef _CFRetain(CFTypeRef cf, Boolean tryR);
 static void __CFTraceBadReceiver(CFTypeRef cf) {
     Dl_info info;
     if (!dladdr((void *)cf, &info) || info.dli_fname == NULL) return;
+    // Narrow to the measured pathology: the first word is printable ASCII, i.e. the pointer addresses
+    // TEXT (a C string) rather than an object header whose isa is a class. A real ObjC object that
+    // happens to live in an image (constant strings, Swift metadata) has a non-printable first word,
+    // so this filter is what makes the report about the defect instead of about every image-resident
+    // object CFRetain legitimately sees.
+    const unsigned char *w = (const unsigned char *)cf;
+    for (int i = 0; i < 8; i++) {
+        if (w[i] < 0x20 || w[i] > 0x7e) return;
+    }
     static int seen = 0;
     if (seen >= CF_BAD_RECEIVER_LIMIT) return;
     seen++;
