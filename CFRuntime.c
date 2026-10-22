@@ -574,6 +574,7 @@ static void _cfRingDump(int sig) {
         if (dladdr(_cfRing[i].ret, &fi) && fi.dli_fname) { img = fi.dli_fname; off = (void *)((char *)_cfRing[i].ret - (char *)fi.dli_fbase); }
         dprintf(2, "[cf-ring] signal=%d cf=%p w0=%016llx w1=%016llx caller=%s+%p\n", sig, _cfRing[i].cf,
                 (unsigned long long)_cfRing[i].w0, (unsigned long long)_cfRing[i].w1, img, off);
+        _cfRelReport(_cfRing[i].cf);
         for (int f = 0; f < _cfRing[i].nframes; f++) {
             Dl_info x;
             if (dladdr(_cfRing[i].frames[f], &x) && x.dli_fname)
@@ -581,6 +582,48 @@ static void _cfRingDump(int sig) {
         }
     }
     signal(sig, SIG_DFL);
+}
+
+#define CF_REL_SLOTS 64
+static struct {
+    void *cf;
+    void *ret;
+    void *frames[4];
+} _cfRelRing[CF_REL_SLOTS];
+static volatile int _cfRelNext = 0;
+
+static void _cfRelRecord(CFTypeRef cf) {
+    if (!getenv("DARLING_CF_TRACE_BAD_RECEIVER")) return;
+    int i = _cfRelNext;
+    _cfRelRing[i].cf = (void *)cf;
+    _cfRelRing[i].ret = __builtin_return_address(0);
+    _cfRelRing[i].frames[0] = __builtin_return_address(1);
+    _cfRelRing[i].frames[1] = __builtin_return_address(2);
+    _cfRelRing[i].frames[2] = __builtin_return_address(3);
+    _cfRelRing[i].frames[3] = __builtin_return_address(4);
+    _cfRelNext = (i + 1) % CF_REL_SLOTS;
+}
+
+static void _cfRelReport(CFTypeRef cf) {
+    for (int k = 0; k < CF_REL_SLOTS; k++) {
+        int i = (_cfRelNext + k) % CF_REL_SLOTS;
+        if (_cfRelRing[i].cf != (void *)cf) continue;
+        Dl_info fi;
+        const char *img = "?";
+        void *off = NULL;
+        if (dladdr(_cfRelRing[i].ret, &fi) && fi.dli_fname) { img = fi.dli_fname; off = (void *)((char *)_cfRelRing[i].ret - (char *)fi.dli_fbase); }
+        dprintf(2, "[cf-ring]   RELEASED-EARLIER by %s+%p\n", img, off);
+        for (int f = 0; f < 4; f++) {
+            Dl_info x;
+            const char *n = "?";
+            void *o = NULL;
+            if (_cfRelRing[i].frames[f] && dladdr(_cfRelRing[i].frames[f], &x) && x.dli_fname) {
+                n = x.dli_fname; o = (void *)((char *)_cfRelRing[i].frames[f] - (char *)x.dli_fbase);
+            }
+            dprintf(2, "[cf-ring]     up#%d %s+%p\n", f, n, o);
+        }
+        return;
+    }
 }
 
 static void _cfRingRecord(CFTypeRef cf) {
@@ -615,6 +658,7 @@ static void _CFRelease(CFTypeRef cf);
 
 void CFRelease(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRelease() called with NULL ***"); HALT; }
+    _cfRelRecord(cf);
 #if 0
     void **addrs[2] = {&&start, &&end};
     start:;
