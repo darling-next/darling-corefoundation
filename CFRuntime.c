@@ -39,7 +39,6 @@
 #include <CoreFoundation/CFCalendar.h>
 #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
 #include <dlfcn.h>
-#include <sys/mman.h>
 #include <execinfo.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
@@ -543,50 +542,60 @@ CFStringRef CFCopyTypeIDDescription(CFTypeID type) {
 
 static CFTypeRef _CFRetain(CFTypeRef cf, Boolean tryR);
 
-// DIAGNOSTIC (gated). CFRetain dispatches to -retain when _CFIsCFObject() says "not a CF object",
-// and that test treats ANY non-zero first word as a valid isa. MEASURED 2026-10-22: the guest died in
-// _objc_msgSend with the receiver pointing at the bytes of the constant string "buildResult" (rodata of
-// IDEFoundation), i.e. CFRetain was handed a char*, not an object. This prints that event, with a
-// backtrace, and only when DARLING_CF_TRACE_BAD_RECEIVER is set in the environment.
-#define CF_BAD_RECEIVER_LIMIT 8
-static void __CFTraceBadReceiver(CFTypeRef cf) {
-    Dl_info info;
-    if (!dladdr((void *)cf, &info) || info.dli_fname == NULL) return;
-    // Narrow to the measured pathology: the first word is printable ASCII, i.e. the pointer addresses
-    // TEXT (a C string) rather than an object header whose isa is a class. A real ObjC object that
-    // happens to live in an image (constant strings, Swift metadata) has a non-printable first word,
-    // so this filter is what makes the report about the defect instead of about every image-resident
-    // object CFRetain legitimately sees.
-    // Narrow to the measured pathology: _CFIsCFObject() says "ObjC object", but the isa the object
-    // header names is not mapped at all (MEASURED: the guest died at and 0x18(isa) with isa derived
-    // from a non-object). A real class always lives in mapped memory, so an unmapped isa is the
-    // signal that a non-object reached CFRetain, whatever the bytes happen to look like.
-    uintptr_t isa = ((CFRuntimeBase *)cf)->_cfisa;
-    if (isa != 0) {
-        static long pagesz = 0;
-        if (pagesz == 0) pagesz = sysconf(_SC_PAGESIZE);
-        unsigned char vec = 0;
-        if (mincore((void *)(isa & ~(uintptr_t)(pagesz - 1)), (size_t)pagesz, &vec) == 0) return;
-    }
-    static int seen = 0;
-    if (seen >= CF_BAD_RECEIVER_LIMIT) return;
-    seen++;
-    fprintf(stderr, "[cfretain-bad-receiver] cf=%p image=%s\n", cf, info.dli_fname);
-    void *frames[24];
-    int n = backtrace(frames, 24);
-    for (int i = 0; i < n; i++) {
+// DIAGNOSTIC (gated). Class D dies inside libobjc's objc_msgSend with a receiver that is not an
+// object, and the caller chain is CFRetain. Filtering by "looks like a string" or "isa is unmapped"
+// both MISSED it (measured), so this records a ring of the last CFRetain receivers WITH their call
+// sites and dumps it from a SIGSEGV handler: the last entry before the fault is the culprit, whatever
+// shape its receiver has. Gated on DARLING_CF_TRACE_BAD_RECEIVER; silent otherwise.
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+
+#define CF_RING_SLOTS 8
+#define CF_RING_FRAMES 10
+static struct {
+    void *cf;
+    void *ret;
+    void *frames[CF_RING_FRAMES];
+    int nframes;
+} _cfRing[CF_RING_SLOTS];
+static volatile int _cfRingNext = 0;
+static int _cfRingInstalled = 0;
+
+static void _cfRingDump(int sig) {
+    for (int k = 0; k < CF_RING_SLOTS; k++) {
+        int i = (_cfRingNext + k) % CF_RING_SLOTS;
+        if (_cfRing[i].cf == NULL) continue;
         Dl_info fi;
-        if (dladdr(frames[i], &fi) && fi.dli_fname) {
-            fprintf(stderr, "[cfretain-bad-receiver]   #%d %s + %p\n", i, fi.dli_fname, (void *)((char *)frames[i] - (char *)fi.dli_fbase));
-        } else {
-            fprintf(stderr, "[cfretain-bad-receiver]   #%d %p\n", i, frames[i]);
+        const char *img = "?";
+        void *off = NULL;
+        if (dladdr(_cfRing[i].ret, &fi) && fi.dli_fname) { img = fi.dli_fname; off = (void *)((char *)_cfRing[i].ret - (char *)fi.dli_fbase); }
+        dprintf(2, "[cf-ring] signal=%d cf=%p caller=%s+%p\n", sig, _cfRing[i].cf, img, off);
+        for (int f = 0; f < _cfRing[i].nframes; f++) {
+            Dl_info x;
+            if (dladdr(_cfRing[i].frames[f], &x) && x.dli_fname)
+                dprintf(2, "[cf-ring]   #%d %s+%p\n", f, x.dli_fname, (void *)((char *)_cfRing[i].frames[f] - (char *)x.dli_fbase));
         }
     }
+    signal(sig, SIG_DFL);
+}
+
+static void _cfRingRecord(CFTypeRef cf) {
+    if (!_cfRingInstalled) {
+        _cfRingInstalled = 1;
+        signal(SIGSEGV, _cfRingDump);
+        signal(SIGBUS, _cfRingDump);
+    }
+    int i = _cfRingNext;
+    _cfRing[i].cf = (void *)cf;
+    _cfRing[i].ret = __builtin_return_address(0);
+    _cfRing[i].nframes = backtrace(_cfRing[i].frames, CF_RING_FRAMES);
+    _cfRingNext = (i + 1) % CF_RING_SLOTS;
 }
 
 CFTypeRef CFRetain(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRetain() called with NULL ***"); HALT; }
-    if (cf && !_CFIsCFObject(cf) && getenv("DARLING_CF_TRACE_BAD_RECEIVER")) __CFTraceBadReceiver(cf);
+    if (cf && getenv("DARLING_CF_TRACE_BAD_RECEIVER") && !_CFIsCFObject(cf)) _cfRingRecord(cf);
     CFTYPE_OBJC_FUNCDISPATCH0(CFTypeRef, cf, retain);
     if (cf) __CFGenericAssertIsCF(cf);
     return _CFRetain(cf, false);
