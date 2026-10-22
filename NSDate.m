@@ -400,3 +400,27 @@ CFTimeInterval CFDateGetTimeIntervalSinceDate(CFDateRef date, CFDateRef otherDat
 CFComparisonResult CFDateCompare(CFDateRef date, CFDateRef otherDate, void *context) {
     return (CFComparisonResult)[(NSDate *)date compare: (NSDate *)otherDate];
 }
+
+/* NSConstantDate is the class of the dates the compiler emits for constant
+ * (literal) dates; in Apple's CoreFoundation it is one of the exported
+ * constant-collection classes (CoreFoundation.tbd: objc-classes NSConstantDate,
+ * objc-ivars NSConstantDate._ti, a time interval since the reference date).
+ * Clients reference the CLASS OBJECT by name -- xcodebuild imports
+ * _OBJC_CLASS_$_NSConstantDate, checked against the client's own bytes with
+ * `llvm-nm -m <client> | grep NSConstant` -- and dyld stops with
+ * "Symbol not found: _OBJC_CLASS_$_NSConstantDate / Expected in CoreFoundation"
+ * without it.  The ivar name matches Apple's declared name.  Deliberately NOT
+ * CF_PRIVATE: it is an exported symbol in Apple's CoreFoundation. */
+@interface NSConstantDate : NSDate {
+    NSTimeInterval _ti;
+}
+@end
+
+@implementation NSConstantDate
+
+- (NSTimeInterval)timeIntervalSinceReferenceDate
+{
+    return _ti;
+}
+
+@end
