@@ -644,17 +644,7 @@ static void _cfRingRecord(CFTypeRef cf) {
 }
 
 CFTypeRef CFRetain(CFTypeRef cf) {
-    if (NULL == cf) {
-        if (getenv("DARLING_CF_TRACE_BAD_RECEIVER")) {
-            Dl_info fi;
-            const char *img = "?";
-            void *off = NULL;
-            void *ra = __builtin_return_address(0);
-            if (dladdr(ra, &fi) && fi.dli_fname) { img = fi.dli_fname; off = (void *)((char *)ra - (char *)fi.dli_fbase); }
-            dprintf(2, "[cf-null-retain] caller=%s+%p\n", img, off);
-        }
-        CRSetCrashLogMessage("*** CFRetain() called with NULL ***"); HALT;
-    }
+    if (NULL == cf) { CRSetCrashLogMessage("*** CFRetain() called with NULL ***"); HALT; }
     if (cf && getenv("DARLING_CF_TRACE_BAD_RECEIVER") && !_CFIsCFObject(cf)) _cfRingRecord(cf);
     CFTYPE_OBJC_FUNCDISPATCH0(CFTypeRef, cf, retain);
     if (cf) __CFGenericAssertIsCF(cf);
