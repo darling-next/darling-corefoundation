@@ -39,7 +39,6 @@
 #include <CoreFoundation/CFCalendar.h>
 #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
 #include <dlfcn.h>
-#include <sys/mman.h>
 #include <execinfo.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
@@ -557,16 +556,9 @@ static void __CFTraceBadReceiver(CFTypeRef cf) {
     // happens to live in an image (constant strings, Swift metadata) has a non-printable first word,
     // so this filter is what makes the report about the defect instead of about every image-resident
     // object CFRetain legitimately sees.
-    // Narrow to the measured pathology: _CFIsCFObject() says "ObjC object", but the isa the object
-    // header names is not mapped at all (MEASURED: the guest died at and 0x18(isa) with isa derived
-    // from a non-object). A real class always lives in mapped memory, so an unmapped isa is the
-    // signal that a non-object reached CFRetain, whatever the bytes happen to look like.
-    uintptr_t isa = ((CFRuntimeBase *)cf)->_cfisa;
-    if (isa != 0) {
-        static long pagesz = 0;
-        if (pagesz == 0) pagesz = sysconf(_SC_PAGESIZE);
-        unsigned char vec = 0;
-        if (mincore((void *)(isa & ~(uintptr_t)(pagesz - 1)), (size_t)pagesz, &vec) == 0) return;
+    const unsigned char *w = (const unsigned char *)cf;
+    for (int i = 0; i < 8; i++) {
+        if (w[i] < 0x20 || w[i] > 0x7e) return;
     }
     static int seen = 0;
     if (seen >= CF_BAD_RECEIVER_LIMIT) return;
