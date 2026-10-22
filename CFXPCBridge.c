@@ -43,6 +43,18 @@ CFTypeRef _CFXPCCreateCFObjectFromXPCObject(xpc_object_t xo) {
 			return true;
 		});
 
+		// DIAGNOSTIC (gated): the arrays above are sized from xpc_dictionary_get_count() and filled by
+		// xpc_dictionary_apply(). If the two disagree, the tail of values[] is UNINITIALIZED malloc
+		// memory, and CFDictionaryCreate() retains it as if it were a CF object. MEASURED 2026-10-22:
+		// the faulting receivers had heap garbage in their header words.
+		if (getenv("DARLING_CF_TRACE_BAD_RECEIVER") && idx != count) {
+			fprintf(stderr, "[cfxpc] dict count mismatch: count=%zu applied=%zu\n", count, idx);
+		}
+		for (size_t i = 0; i < idx; i++) {
+			if (values[i] == NULL && getenv("DARLING_CF_TRACE_BAD_RECEIVER")) {
+				fprintf(stderr, "[cfxpc] dict value %zu is NULL (key=%s)\n", i, CFStringGetCStringPtr(keys[i], kCFStringEncodingUTF8));
+			}
+		}
 		CFDictionaryRef dict = CFDictionaryCreate(NULL, keys, values, count, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
 		for (size_t i = 0; i < count; ++i) {
@@ -64,6 +76,11 @@ CFTypeRef _CFXPCCreateCFObjectFromXPCObject(xpc_object_t xo) {
 			return true;
 		});
 
+		if (getenv("DARLING_CF_TRACE_BAD_RECEIVER")) {
+			for (size_t i = 0; i < count; i++) {
+				if (entries[i] == NULL) fprintf(stderr, "[cfxpc] array entry %zu is NULL\n", i);
+			}
+		}
 		CFArrayRef array = CFArrayCreate(NULL, entries, count, &kCFTypeArrayCallBacks);
 
 		for (size_t i = 0; i < count; ++i)
