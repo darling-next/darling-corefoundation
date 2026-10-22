@@ -39,6 +39,7 @@
 #include <CoreFoundation/CFCalendar.h>
 #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <crt_externs.h>
@@ -541,8 +542,34 @@ CFStringRef CFCopyTypeIDDescription(CFTypeID type) {
 
 static CFTypeRef _CFRetain(CFTypeRef cf, Boolean tryR);
 
+// DIAGNOSTIC (gated). CFRetain dispatches to -retain when _CFIsCFObject() says "not a CF object",
+// and that test treats ANY non-zero first word as a valid isa. MEASURED 2026-10-22: the guest died in
+// _objc_msgSend with the receiver pointing at the bytes of the constant string "buildResult" (rodata of
+// IDEFoundation), i.e. CFRetain was handed a char*, not an object. This prints that event, with a
+// backtrace, and only when DARLING_CF_TRACE_BAD_RECEIVER is set in the environment.
+#define CF_BAD_RECEIVER_LIMIT 8
+static void __CFTraceBadReceiver(CFTypeRef cf) {
+    Dl_info info;
+    if (!dladdr((void *)cf, &info) || info.dli_fname == NULL) return;
+    static int seen = 0;
+    if (seen >= CF_BAD_RECEIVER_LIMIT) return;
+    seen++;
+    fprintf(stderr, "[cfretain-bad-receiver] cf=%p image=%s\n", cf, info.dli_fname);
+    void *frames[24];
+    int n = backtrace(frames, 24);
+    for (int i = 0; i < n; i++) {
+        Dl_info fi;
+        if (dladdr(frames[i], &fi) && fi.dli_fname) {
+            fprintf(stderr, "[cfretain-bad-receiver]   #%d %s + %p\n", i, fi.dli_fname, (void *)((char *)frames[i] - (char *)fi.dli_fbase));
+        } else {
+            fprintf(stderr, "[cfretain-bad-receiver]   #%d %p\n", i, frames[i]);
+        }
+    }
+}
+
 CFTypeRef CFRetain(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRetain() called with NULL ***"); HALT; }
+    if (cf && !_CFIsCFObject(cf) && getenv("DARLING_CF_TRACE_BAD_RECEIVER")) __CFTraceBadReceiver(cf);
     CFTYPE_OBJC_FUNCDISPATCH0(CFTypeRef, cf, retain);
     if (cf) __CFGenericAssertIsCF(cf);
     return _CFRetain(cf, false);
