@@ -564,6 +564,8 @@ static struct {
 static volatile int _cfRingNext = 0;
 static int _cfRingInstalled = 0;
 
+static void _cfRelReport(CFTypeRef cf);
+
 static void _cfRingDump(int sig) {
     for (int k = 0; k < CF_RING_SLOTS; k++) {
         int i = (_cfRingNext + k) % CF_RING_SLOTS;
