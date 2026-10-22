@@ -543,7 +543,6 @@ static CFTypeRef _CFRetain(CFTypeRef cf, Boolean tryR);
 
 CFTypeRef CFRetain(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRetain() called with NULL ***"); HALT; }
-    if (cf && !_CFIsCFObject(cf) && getenv("DARLING_CF_TRACE_BAD_RECEIVER")) __CFTraceBadReceiver(cf);
     CFTYPE_OBJC_FUNCDISPATCH0(CFTypeRef, cf, retain);
     if (cf) __CFGenericAssertIsCF(cf);
     return _CFRetain(cf, false);
