@@ -610,10 +610,13 @@ static void __CFTSDFinalize(void *arg) {
     }
     
     if (table->destructorCount == PTHREAD_DESTRUCTOR_ITERATIONS - 1) {    // On PTHREAD_DESTRUCTOR_ITERATIONS-1 call, destroy our data
-        free(table);
-        
-        // Now if the destructor is called again we will take the shortcut at the beginning of this function.
-        __CFTSDSetSpecific(CF_TSD_BAD_PTR);
+        /* Do NOT free the table here. MEASURED 2026-10-23: the iOS build workload produced 56
+         * "Warning: TSD slot 1 retrieved but the thread data has already been torn down." lines in the same run
+         * that failed with posix_spawn EIO, i.e. code still reaches the TSD after the table is retired, and with
+         * the table gone every such access silently degrades to NULL. Leaking one small table per thread keeps
+         * those accesses well-defined; threads are few and the process is short-lived compared to the cost of a
+         * spawn failing. */
+        __CFTSDSetSpecific(table);
         return;
     }
 }
