@@ -3,6 +3,8 @@ project(corefoundation)
 include(darling_framework)
 
 remove_sdk_framework(CoreFoundation)
+# Diagnostic: allows NSZombieEnabled=YES to name the class of a freed object (inert unless the env var is set).
+add_compile_definitions(ENABLE_ZOMBIES)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fblocks -fconstant-cfstrings -fexceptions \
 	-include ${CMAKE_CURRENT_SOURCE_DIR}/CoreFoundation_Prefix.h \
