@@ -807,9 +807,25 @@ static CFRunLoopModeRef __CFRunLoopFindMode(CFRunLoopRef rl, CFStringRef modeNam
     
 #endif
 #if USE_MK_TIMER_TOO
-    rlm->_timerPort = mk_timer_create();
-    ret = __CFPortSetInsert(rlm->_timerPort, rlm->_portSet);
-    if (KERN_SUCCESS != ret) CRASH("*** Unable to insert timer port into port set. (%d) ***", ret);
+    /* A TRANSIENT PORT FAILURE MUST NOT KILL THE PROCESS. MEASURED 2026-10-23: a guest xcodebuild trapped here
+     * (int3 at this site, read from a core) right after LaunchServices failed to register a bundle. The guest's
+     * mk_timer_create turns a failed management-plane request into MACH_PORT_NULL, and a competing thread can
+     * lose the single plane slot for a moment -- the same race the plane now retries through. Retry the port a
+     * few times, and if it still fails, say WHICH failure it is before the trap: CRSetCrashLogMessage is a no-op
+     * in this build, so the message never reaches a log. */
+    for (int attempt = 0; ; attempt++) {
+        rlm->_timerPort = mk_timer_create();
+        ret = __CFPortSetInsert(rlm->_timerPort, rlm->_portSet);
+        if (KERN_SUCCESS == ret) break;
+        if (attempt >= 8) {
+            fprintf(stderr, "[cfrlm-timer-port] give-up port=%u crash_ret=%d portset=%u\n",
+                    (unsigned)rlm->_timerPort, (int)ret, (unsigned)rlm->_portSet);
+            fflush(stderr);
+            CRASH("*** Unable to insert timer port into port set. (%d) ***", ret);
+        }
+        struct timespec ts = { 0, 1000000L };
+        nanosleep(&ts, NULL);
+    }
 #endif
     
     ret = __CFPortSetInsert(rl->_wakeUpPort, rlm->_portSet);
