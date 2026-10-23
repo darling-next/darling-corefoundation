@@ -681,13 +681,14 @@ Boolean CFURLCopyResourcePropertyForKey(CFURLRef url, CFStringRef key, void *pro
     
     CFURLResourceInfoUpdateRelease(resourceInfo, key, value);
 
-    if (value != NULL)
-    {
-        CFRelease(value);
-        return true;
-    }
-
-    return false;
+    /* The value is handed to the caller through propertyValueTypeRefPtr, which is a COPY result: the caller
+     * owns that reference and will CFRelease it. Releasing it here as well destroyed the dictionary's own
+     * reference, so the cache kept a dangling pointer and the next lookup returned it: MEASURED 2026-10-22 as
+     * the intermittent xcodebuild crashes (an object handed back from this cache whose memory had been reused
+     * -- reported as "-[NSOperationQueue _cfurl]: unrecognized selector" and relatives), and reproduced
+     * without Xcode by a probe that calls this function with CFSTR("NSURLNameKey") and then releases the
+     * returned value (rc 139 every time), while the same probe with a heap-allocated key usually survived. */
+    return value != NULL;
 }
 
 CFDictionaryRef CFURLCopyResourcePropertiesForKeys(CFURLRef url, CFArrayRef keys, CFErrorRef *error)
