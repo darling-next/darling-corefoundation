@@ -306,6 +306,17 @@ CF_INLINE CFOptionFlags CF_GET_COLLECTABLE_MEMORY_TYPE(const CFRuntimeClass *cls
 #define CF_GET_COLLECTABLE_MEMORY_TYPE(x) (0)
 #endif
 
+
+/* Diagnostic hook into libmalloc's allocation ring (MALLOC_TRACE_RING): annotate a CF object's address with its
+ * type id and the site that created or destroyed it, so a fault dump can name the object that was messaged after
+ * it was freed. Inert unless libmalloc has the ring enabled. */
+extern void _darl_trace_note(uintptr_t addr, uintptr_t a, uintptr_t b);
+CF_PRIVATE int __CFDarlingTraceNoteOn(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("MALLOC_TRACE_RING"); on = (e && *e && *e != '0'); }
+    return on;
+}
+
 CFTypeRef _CFRuntimeCreateInstance(CFAllocatorRef allocator, CFTypeID typeID, CFIndex extraBytes, unsigned char *category) {
     if (__CFRuntimeClassTableSize <= typeID) HALT;
     CFAssert1(typeID != _kCFRuntimeNotATypeID, __kCFLogAssertion, "%s(): Uninitialized type id", __PRETTY_FUNCTION__);
@@ -326,6 +337,7 @@ CFTypeRef _CFRuntimeCreateInstance(CFAllocatorRef allocator, CFTypeID typeID, CF
 	return NULL;
     }
     Boolean usesSystemDefaultAllocator = _CFAllocatorIsSystemDefault(realAllocator);
+    int darlNote = __CFDarlingTraceNoteOn();
     size_t align = (cls->version & _kCFRuntimeRequiresAlignment) ? cls->requiredAlignment : 16;
     CFIndex size = sizeof(CFRuntimeBase) + extraBytes + (usesSystemDefaultAllocator ? 0 : sizeof(CFAllocatorRef));
     size = (size + 0xF) & ~0xF;	// CF objects are multiples of 16 in size
@@ -377,6 +389,9 @@ CFTypeRef _CFRuntimeCreateInstance(CFAllocatorRef allocator, CFTypeID typeID, CF
     // memory->_cfisa = 0;
     if (NULL != cls->init) {
 	(cls->init)(memory);
+    }
+    if (darlNote) {
+	_darl_trace_note((uintptr_t)memory, (uintptr_t)typeID, (uintptr_t)__builtin_return_address(0));
     }
     return memory;
 }
@@ -992,6 +1007,18 @@ void __CFInitialize(void) {
         
         __CFProphylacticAutofsAccess = true;
 
+#if defined(DEBUG) || defined(ENABLE_ZOMBIES)
+        /* Darwin behaviour: NSZombieEnabled=YES turns deallocated CF/NS objects into zombies that report the
+         * class of the object a stale message was sent to. Added because a use-after-free in this runtime shows
+         * up as "message sent to a deallocated instance" with no way to name the class without it. */
+        {
+            const char *zombies = getenv("NSZombieEnabled");
+            if (zombies != NULL && (!strcmp(zombies, "YES") || !strcmp(zombies, "1"))) {
+                _CFEnableZombies();
+            }
+        }
+#endif
+
         for (CFIndex idx = 0; idx < sizeof(__CFEnv) / sizeof(__CFEnv[0]); idx++) {
             __CFEnv[idx].value = __CFEnv[idx].name ? getenv(__CFEnv[idx].name) : NULL;
         }
@@ -1540,6 +1567,9 @@ static void _CFRelease(CFTypeRef cf) {
 		if (!CAS64(allBits, newAllBits, (int64_t *)&((CFRuntimeBase *)cf)->_cfinfo)) {
 		    goto again;
 		}
+                if (__CFDarlingTraceNoteOn()) {
+                    _darl_trace_note((uintptr_t)cf, (uintptr_t)typeID, (uintptr_t)__builtin_return_address(0));
+                }
                 void (*func)(CFTypeRef) = __CFRuntimeClassTable[typeID]->finalize;
 	        if (NULL != func) {
 		    func(cf);

@@ -29,6 +29,11 @@
 #include <CoreFoundation/CFArray.h>
 #include <CoreFoundation/CFPriv.h>
 #include "CFInternal.h"
+
+/* Diagnostic hook: annotate this array's address with the public API that created it
+ * (MALLOC_TRACE_RING). Inert unless libmalloc's ring is enabled. */
+extern void _darl_trace_note(uintptr_t addr, uintptr_t a, uintptr_t b);
+extern int __CFDarlingTraceNoteOn(void);
 #include <string.h>
 
 
@@ -417,6 +422,9 @@ static CFArrayRef __CFArrayInit(CFAllocatorRef allocator, UInt32 flags, CFIndex 
 	FAULT_CALLBACK((void **)&(cb->release));
 	FAULT_CALLBACK((void **)&(cb->copyDescription));
 	FAULT_CALLBACK((void **)&(cb->equal));
+    }
+    if (__CFDarlingTraceNoteOn()) {
+        _darl_trace_note((uintptr_t)memory, 0xA0000000u | (uintptr_t)flags, (uintptr_t)__builtin_return_address(0));
     }
     return (CFArrayRef)memory;
 }
