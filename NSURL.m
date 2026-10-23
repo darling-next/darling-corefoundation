@@ -662,16 +662,35 @@ Boolean CFURLCopyResourcePropertyForKey(CFURLRef url, CFStringRef key, void *pro
         *error = NULL;
     }
 
+    /* Diagnostic probe: CF_URL_NO_RESOURCE_CACHE=1 bypasses this cache entirely, so a stale entry left here
+     * cannot be the cause of an observed misuse. Inert without the variable. */
+    static int noCache = -1;
+    if (noCache < 0) { const char *e = getenv("CF_URL_NO_RESOURCE_CACHE"); noCache = (e && *e && *e != '0'); }
+    if (noCache) {
+        CFTypeRef value = CFURLCreatePropertyForKey(url, key, error);
+        if (propertyValueTypeRefPtr != NULL) *(CFTypeRef *)propertyValueTypeRefPtr = value;
+        return value != NULL;
+    }
+
     CFMutableDictionaryRef resourceInfo = CFURLResourceInfo(url);
-    CFTypeRef value = (CFTypeRef)CFDictionaryGetValue(resourceInfo, key);
+    CFTypeRef value;
+
+    /* Every other access to resourceInfo holds resInfoLock; this one did not, so a concurrent
+     * CFURLResourceInfoUpdateRelease could replace (and free) the value between the lookup and the retain.
+     * MEASURED 2026-10-23: the intermittent xcodebuild deaths survive as type confusion even after the two
+     * ownership fixes, and the workload is multi-threaded. Keep the retain inside the lock; the creation path
+     * stays outside it because CFURLCreatePropertyForKey can re-enter this same URL. */
+    pthread_mutex_lock(&resInfoLock);
+    value = (CFTypeRef)CFDictionaryGetValue(resourceInfo, key);
+    if (value != NULL)
+    {
+        value = CFRetain(value);
+    }
+    pthread_mutex_unlock(&resInfoLock);
 
     if (value == NULL)
     {
         value = CFURLCreatePropertyForKey(url, key, error);
-    }
-    else
-    {
-        value = CFRetain(value);
     }
     
     if (propertyValueTypeRefPtr != NULL)
@@ -724,15 +743,19 @@ CFDictionaryRef CFURLCopyResourcePropertiesForKeys(CFURLRef url, CFArrayRef keys
     for (CFIndex idx = 0; idx < count; idx++)
     {
         CFStringRef key = CFArrayGetValueAtIndex(keys, idx);
-        CFTypeRef value = (CFTypeRef)CFDictionaryGetValue(resourceInfo, key);
+        CFTypeRef value;
+
+        pthread_mutex_lock(&resInfoLock);
+        value = (CFTypeRef)CFDictionaryGetValue(resourceInfo, key);
+        if (value != NULL)
+        {
+            value = CFRetain(value);
+        }
+        pthread_mutex_unlock(&resInfoLock);
 
         if (value == NULL)
         {
             value = CFURLCreatePropertyForKey(url, key, error);
-        }
-        else
-        {
-            value = CFRetain(value);
         }
 
         CFURLResourceInfoUpdate(resourceInfo, key, value);
