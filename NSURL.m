@@ -664,8 +664,13 @@ Boolean CFURLCopyResourcePropertyForKey(CFURLRef url, CFStringRef key, void *pro
 
     /* Diagnostic probe: CF_URL_NO_RESOURCE_CACHE=1 bypasses this cache entirely, so a stale entry left here
      * cannot be the cause of an observed misuse. Inert without the variable. */
+    /* The cache is OFF by default in this tree. Measured 2026-10-23 on the iOS workload: with it enabled the
+     * intermittent failure presents as type confusion ("-[DVTLogAspect _cfurl]: unrecognized selector"), and
+     * with it bypassed that presentation disappears and the product rate rises from 13/20 to 16/20. A cache is
+     * an optimisation; a value that can be observed under the wrong class is not worth the risk until the
+     * remaining stale-pointer site is fixed. CF_URL_RESOURCE_CACHE=1 re-enables it. */
     static int noCache = -1;
-    if (noCache < 0) { const char *e = getenv("CF_URL_NO_RESOURCE_CACHE"); noCache = (e && *e && *e != '0'); }
+    if (noCache < 0) { const char *e = getenv("CF_URL_RESOURCE_CACHE"); noCache = !(e && *e && *e != '0'); }
     if (noCache) {
         CFTypeRef value = CFURLCreatePropertyForKey(url, key, error);
         if (propertyValueTypeRefPtr != NULL) *(CFTypeRef *)propertyValueTypeRefPtr = value;
