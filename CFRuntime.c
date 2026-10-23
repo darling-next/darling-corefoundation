@@ -311,9 +311,24 @@ CF_INLINE CFOptionFlags CF_GET_COLLECTABLE_MEMORY_TYPE(const CFRuntimeClass *cls
  * type id and the site that created or destroyed it, so a fault dump can name the object that was messaged after
  * it was freed. Inert unless libmalloc has the ring enabled. */
 extern void _darl_trace_note(uintptr_t addr, uintptr_t a, uintptr_t b);
+/* One switch for every in-process diagnostic in this tree (see docs/tooling.md, darling-diagnostics skill). */
+CF_PRIVATE int __CFDarlingDiag(const char *token) {
+    static const char *all = NULL;
+    static int cached = 0;
+    if (!cached) { all = getenv("DARLING_DIAG"); cached = 1; }
+    if (all == NULL || *all == 0) return 0;
+    size_t n = strlen(token);
+    for (const char *p = all; (p = strstr(p, token)) != NULL; p += n) {
+        int before = (p == all) || (p[-1] == ',');
+        int after = (p[n] == 0) || (p[n] == ',');
+        if (before && after) return 1;
+    }
+    return 0;
+}
+
 CF_PRIVATE int __CFDarlingTraceNoteOn(void) {
     static int on = -1;
-    if (on < 0) { const char *e = getenv("MALLOC_TRACE_RING"); on = (e && *e && *e != '0'); }
+    if (on < 0) { const char *e = getenv("MALLOC_TRACE_RING"); on = (e && *e && *e != '0') || __CFDarlingDiag("alloc"); }
     return on;
 }
 
@@ -570,6 +585,12 @@ CFTypeRef CFAutorelease(CFTypeRef __attribute__((cf_consumed)) cf) {
 
 static void _CFRelease(CFTypeRef cf);
 
+/* Diagnostic: remember which caller asked for the release that turned out to be the last one, so __CFURLDeallocate
+ * can name the releaser instead of CF's own release machinery. Enabled by CFURL_FREE_TRACE; per-thread because the
+ * deallocation happens synchronously inside that same release. */
+CF_PRIVATE int darl_release_trace_on = -1;
+__thread void *darl_last_release_caller = NULL;
+
 void CFRelease(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRelease() called with NULL ***"); HALT; }
 #if 0
@@ -580,6 +601,13 @@ void CFRelease(CFTypeRef cf) {
 	HALT;
     }
 #endif
+    if (darl_release_trace_on < 0) {
+        const char *e = getenv("CFURL_FREE_TRACE");
+        darl_release_trace_on = (e && *e && *e != '0') || __CFDarlingDiag("url-free");
+    }
+    if (darl_release_trace_on) {
+        darl_last_release_caller = __builtin_return_address(0);
+    }
     CFTYPE_OBJC_FUNCDISPATCH(cf, release);
     if (cf) __CFGenericAssertIsCF(cf);
     _CFRelease(cf);

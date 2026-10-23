@@ -670,7 +670,10 @@ Boolean CFURLCopyResourcePropertyForKey(CFURLRef url, CFStringRef key, void *pro
      * an optimisation; a value that can be observed under the wrong class is not worth the risk until the
      * remaining stale-pointer site is fixed. CF_URL_RESOURCE_CACHE=1 re-enables it. */
     static int noCache = -1;
-    if (noCache < 0) { const char *e = getenv("CF_URL_RESOURCE_CACHE"); noCache = !(e && *e && *e != '0'); }
+    if (noCache < 0) {
+        const char *e = getenv("CF_URL_RESOURCE_CACHE");
+        noCache = !((e && *e && *e != '0') || __CFDarlingDiag("url-cache"));
+    }
     if (noCache) {
         CFTypeRef value = CFURLCreatePropertyForKey(url, key, error);
         if (propertyValueTypeRefPtr != NULL) *(CFTypeRef *)propertyValueTypeRefPtr = value;

@@ -1588,10 +1588,23 @@ extern __attribute((used)) void __CFURLDumpMemRecord(void) {
 }
 #endif
 
+extern __thread void *darl_last_release_caller;
+extern int __CFDarlingDiag(const char *token);
+
 static void __CFURLDeallocate(CFTypeRef  cf) {
     CFURLRef  url = (CFURLRef)cf;
     CFAllocatorRef alloc;
     __CFGenericValidateType(cf, CFURLGetTypeID());
+    /* Diagnostic: print each URL's address and the immediate caller so a later "unrecognized selector sent to
+     * instance <addr>" can be matched against a URL that was freed earlier in the same run. Inert without the
+     * environment variable. */
+    if (getenv("CFURL_FREE_TRACE") || __CFDarlingDiag("url-free")) {
+        void *caller = __builtin_return_address(0);
+        void *caller2 = __builtin_return_address(1);
+        fprintf(stderr, "[cfurl-free] url=%p caller=%p caller2=%p releaser=%p\n",
+                (void *)url, caller, caller2, (void *)darl_last_release_caller);
+        fflush(stderr);
+    }
     alloc = CFGetAllocator(url);
 #if DEBUG_URL_MEMORY_USAGE
     numDealloced ++;

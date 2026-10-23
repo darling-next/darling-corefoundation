@@ -850,3 +850,6 @@ CF_EXTERN_C_END
 
 #endif /* ! __COREFOUNDATION_CFINTERNAL__ */
 
+
+/* In-process diagnostic switch (DARLING_DIAG), see docs/tooling.md. */
+CF_PRIVATE int __CFDarlingDiag(const char *token);
