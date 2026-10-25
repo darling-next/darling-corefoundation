@@ -64,6 +64,7 @@ set(cf_c_sources
 	CFLocale.c
 	CFLocaleIdentifier.c
 	CFLocaleKeys.c
+	CFFileDescriptor.c
 	CFMachPort.c
 	CFMessagePort.c
 	CFNotificationCenter.c

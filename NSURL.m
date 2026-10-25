@@ -22,6 +22,10 @@
 #define STACK_BUFFER_SIZE 100 // pretty safe bet this will be quite unlikely to use more than this since there are only 94 properties
 
 NSString *const NSURLFileScheme = @"file";
+NSString *const NSURLFileProtectionNone = @"NSURLFileProtectionNone";
+NSString *const NSURLFileProtectionComplete = @"NSURLFileProtectionComplete";
+NSString *const NSURLFileProtectionCompleteUnlessOpen = @"NSURLFileProtectionCompleteUnlessOpen";
+NSString *const NSURLFileProtectionCompleteUntilFirstUserAuthentication = @"NSURLFileProtectionCompleteUntilFirstUserAuthentication";
 NSString *const NSURLAddedToDirectoryDateKey = @"NSURLAddedToDirectoryDateKey";
 NSString *const NSURLKeysOfUnsetValuesKey = @"NSURLKeysOfUnsetValuesKey";
 NSString *const NSURLNameKey = @"NSURLNameKey";

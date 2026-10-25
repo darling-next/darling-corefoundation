@@ -72,3 +72,37 @@ Using CFLite
 The Mac OS X version of CFLite supports most of the functionality of the full CoreFoundation. The Linux version of CFLite focuses on strings, dates, collections, and other property-list related items.
 
 There is an example of using CFLite on linux to process property lists in the 'plconvert.c' file.
+
+Darling provider notes
+---- ---- ---- ---- ----
+
+The Darling CoreFoundation target also owns NSURL.m and NSFileSecurity.m.
+NSURLFileProtectionNone, NSURLFileProtectionComplete,
+NSURLFileProtectionCompleteUnlessOpen and
+NSURLFileProtectionCompleteUntilFirstUserAuthentication are string values
+exported directly by this target; their presence does not implement device
+data protection or encryption.
+
+CFFileSecurityRef is backed by the NSFileSecurity Objective-C object. Its
+registered CF type is reported through _cfTypeID; it is not a CFRuntimeBase
+layout. The POSIX owner/group/mode properties track presence independently of
+their values, are copied independently and can be cleared. Mode values retain
+the permission and special bits (07777). UUID and ACL properties are not
+represented; their unimplemented accessors are not exported. Clearing an
+unsupported property returns false without changing supported properties. Like the reused
+Objective-C implementation, creation uses NSObject allocation, not a custom
+CFAllocator. NSCoding is not implemented by this bounded provider.
+
+CFFileDescriptor.c implements the complete declared descriptor API using
+CFRuntime storage, dispatch read/write sources, and a Mach-port version-one
+CFRunLoop source. Enabling a callback arms actual OS readiness monitoring;
+delivery consumes that direction until explicitly re-enabled. No descriptor
+data is read or written by the monitor. Disabling clears pending delivery.
+Run-loop sources retain the descriptor, but the descriptor never retains a
+run-loop source. Invalidation drains backend cancellation before optionally
+closing the native descriptor, and serializes with client callbacks. Context
+release is deferred until an in-flight callback returns when that callback
+invalidates its own descriptor. A retained run-loop source remains safe but
+inert after descriptor invalidation. As with other readiness APIs, callers
+must not externally close/reuse a monitored native descriptor before
+invalidating the monitor.
