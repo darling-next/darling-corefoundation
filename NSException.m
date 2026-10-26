@@ -56,6 +56,7 @@ NSString *const NSInvalidReceivePortException = @"NSInvalidReceivePortException"
 NSString *const NSPortSendException = @"NSPortSendException";
 NSString *const NSPortReceiveException = @"NSPortReceiveException";
 NSString *const NSCharacterConversionException = @"NSCharacterConversionException";
+NSString *const NSInconsistentArchiveException = @"NSInconsistentArchiveException";
 NSString *const NSFileHandleOperationException = @"NSFileHandleOperationException";
 
 @implementation NSException

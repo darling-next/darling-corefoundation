@@ -115,6 +115,7 @@ set(cf_c_sources
 	CFXMLTree.c
 	CFURLEnumerator.c
 	CFXPCBridge.c
+	CFPasteboard.c
 )
 
 set(cf_sources
