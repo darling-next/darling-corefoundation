@@ -18,6 +18,7 @@
 #include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <dlfcn.h>
+#include <stdlib.h>
 
 #define STACK_BUFFER_SIZE 100 // pretty safe bet this will be quite unlikely to use more than this since there are only 94 properties
 
@@ -209,6 +210,30 @@ static CFTypeRef CFURLCreatePropertyForKey(CFURLRef url, CFStringRef key, CFErro
     {
         // A CFString value containing the URL’s path as a file system path. (read-only)
         value = CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
+    }
+    else if (CFEqual(key, kCFURLCanonicalPathKey))
+    {
+        // corelibs NSURL.swift delegates this key to FileManager's realpath
+        // operation. Keep it in guest filesystem space, not the native host.
+        if (![(NSURL *)url isFileURL])
+        {
+            return NULL;
+        }
+        UInt8 path[PATH_MAX];
+        char resolved[PATH_MAX];
+        if (!CFURLGetFileSystemRepresentation(url, true, path, sizeof(path)))
+        {
+            errno = EINVAL;
+            posixError(error);
+        }
+        else if (realpath((const char *)path, resolved) != NULL)
+        {
+            value = CFStringCreateWithFileSystemRepresentation(kCFAllocatorDefault, resolved);
+        }
+        else
+        {
+            posixError(error);
+        }
     }
     else if (CFEqual(key, kCFURLIsRegularFileKey))
     {
