@@ -34,6 +34,7 @@ const CFStringRef kCFURLIsExecutableKey = CFSTR("NSURLIsExecutableKey");
 const CFStringRef kCFURLFileSecurityKey = CFSTR("NSURLFileSecurityKey");
 const CFStringRef kCFURLIsExcludedFromBackupKey = CFSTR("NSURLIsExcludedFromBackupKey");
 const CFStringRef kCFURLPathKey = CFSTR("_NSURLPathKey");
+const CFStringRef kCFURLCanonicalPathKey = CFSTR("NSURLCanonicalPathKey");
 const CFStringRef kCFURLIsMountTriggerKey = CFSTR("NSURLIsMountTriggerKey");
 const CFStringRef kCFURLFileResourceTypeKey = CFSTR("NSURLFileResourceTypeKey");
 const CFStringRef kCFURLFileResourceTypeNamedPipe = CFSTR("NSURLFileResourceTypeNamedPipe");
