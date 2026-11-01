@@ -783,7 +783,7 @@ CFTypeID CFDateFormatterGetTypeID(void) {
     return __kCFDateFormatterTypeID;
 }
 
-CFDateFormatterRef CFDateFormatterCreate(CFAllocatorRef allocator, CFLocaleRef locale, CFDateFormatterStyle dateStyle, CFDateFormatterStyle timeStyle) {
+static CFDateFormatterRef __CFDateFormatterCreate(CFAllocatorRef allocator, CFLocaleRef locale, CFDateFormatterStyle dateStyle, CFDateFormatterStyle timeStyle, CFBooleanRef calculateISO8601) {
     struct __CFDateFormatter *memory;
     uint32_t size = sizeof(struct __CFDateFormatter) - sizeof(CFRuntimeBase);
     if (allocator == NULL) allocator = __CFGetDefaultAllocator();
@@ -803,7 +803,15 @@ CFDateFormatterRef CFDateFormatterCreate(CFAllocatorRef allocator, CFLocaleRef l
     memory->_property._DoesRelativeDateFormatting = NULL;
     memory->_property._HasCustomFormat = NULL;
     memory->_property._TimeZone = NULL;
-    memory->_property._Calendar = NULL;
+    if (kCFBooleanTrue == calculateISO8601) {
+        // ISO 8601 weeks start on Monday, and week 1 is the first week with at least four days.
+        CFCalendarRef iso8601Cal = CFCalendarCreateWithIdentifier(kCFAllocatorSystemDefault, kCFGregorianCalendar);
+        CFCalendarSetFirstWeekday(iso8601Cal, UCAL_MONDAY);
+        CFCalendarSetMinimumDaysInFirstWeek(iso8601Cal, 4);
+        memory->_property._Calendar = iso8601Cal;
+    } else {
+        memory->_property._Calendar = NULL;
+    }
     memory->_property._CalendarName = NULL;
     memory->_property._TwoDigitStartDate = NULL;
     memory->_property._DefaultDate = NULL;
@@ -895,6 +903,185 @@ CFDateFormatterRef CFDateFormatterCreate(CFAllocatorRef allocator, CFLocaleRef l
 	return NULL;
     }
     return (CFDateFormatterRef)memory;
+}
+
+CFDateFormatterRef CFDateFormatterCreate(CFAllocatorRef allocator, CFLocaleRef locale, CFDateFormatterStyle dateStyle, CFDateFormatterStyle timeStyle) {
+    return __CFDateFormatterCreate(allocator, locale, dateStyle, timeStyle, kCFBooleanFalse);
+}
+
+// Ported from swift-corelibs-foundation (release/5.10) CoreFoundation/Locale.subproj/CFDateFormatter.c,
+// Apache License 2.0 with Runtime Library Exception.
+#define FORMAT_STRING_MAX_LENGTH 33     // Length of "yyyy-'W'ww-dd'T'HH:mm:ss.SSSXXXXX"
+static CFMutableStringRef __createISO8601FormatString(CFISO8601DateFormatOptions options) {
+    CFMutableStringRef resultStr = CFStringCreateMutable(kCFAllocatorSystemDefault, FORMAT_STRING_MAX_LENGTH);
+
+    Boolean useSpaceInsteadOfTChar = (options & kCFISO8601DateFormatWithSpaceBetweenDateAndTime) == kCFISO8601DateFormatWithSpaceBetweenDateAndTime;
+    Boolean useDashSeparator = (options & kCFISO8601DateFormatWithDashSeparatorInDate) == kCFISO8601DateFormatWithDashSeparatorInDate;
+    Boolean useColonSeparatorInTime = (options & kCFISO8601DateFormatWithColonSeparatorInTime) == kCFISO8601DateFormatWithColonSeparatorInTime;
+    Boolean useColonSeparatorInTimeZone = (options & kCFISO8601DateFormatWithColonSeparatorInTimeZone) == kCFISO8601DateFormatWithColonSeparatorInTimeZone;
+    Boolean internetDateTime = (options & kCFISO8601DateFormatWithInternetDateTime) == kCFISO8601DateFormatWithInternetDateTime;
+    Boolean includeFractionalSecs = (options & kCFISO8601DateFormatWithFractionalSeconds) == kCFISO8601DateFormatWithFractionalSeconds;
+
+    if (internetDateTime) {
+        // Check for dashes
+        if (useDashSeparator == false) {
+            CFStringAppendCString(resultStr, "yyyyMMdd", kCFStringEncodingUTF8);
+        } else {
+            CFStringAppendCString(resultStr, "yyyy-MM-dd", kCFStringEncodingUTF8);
+        }
+
+        // Check for T separator
+        if (useSpaceInsteadOfTChar == false) {
+            CFStringAppendCString(resultStr, "'T'", kCFStringEncodingUTF8);
+        } else {
+            CFStringAppendCString(resultStr, " ", kCFStringEncodingUTF8);
+        }
+
+        // Check for colons
+        if (useColonSeparatorInTime == false) {
+            CFStringAppendCString(resultStr, "HHmmss", kCFStringEncodingUTF8);
+        } else {
+            CFStringAppendCString(resultStr, "HH:mm:ss", kCFStringEncodingUTF8);
+        }
+
+        // Add support for fractional seconds
+        if (includeFractionalSecs) {
+            CFStringAppendCString(resultStr, ".SSS", kCFStringEncodingUTF8);
+        }
+
+        // Check for time zone separator
+        if (useColonSeparatorInTimeZone == false) {
+            CFStringAppendCString(resultStr, "XXXX", kCFStringEncodingUTF8);  // Basic Format (e.g. +080500)
+        } else {
+            CFStringAppendCString(resultStr, "XXXXX", kCFStringEncodingUTF8);  // Extended Format (e.g. +08:05:00)
+        }
+
+        return resultStr;  // Skip the loop below.
+    }
+
+    // The upstream corelibs loop walks set option bits. Bounding the walk to the
+    // 32 option bits keeps a high unknown bit combined with lower bits from
+    // shifting by 32; unknown bits still add no pattern text.
+    unsigned int allOptions = (unsigned int)options;
+    for (int i = 0; i < 32; i++) {
+        unsigned int currentOption = 1u << i;
+        if ((allOptions & currentOption) == 0) {
+            continue;
+        }
+        Boolean firstFormatSymbol = false;
+        if (CFStringGetLength(resultStr) < 1) {
+            firstFormatSymbol = true;
+        }
+        switch (currentOption) {
+            case kCFISO8601DateFormatWithYear:
+                if ((options & kCFISO8601DateFormatWithYear) == kCFISO8601DateFormatWithYear) {
+                    Boolean includesWeekOfYear = (options & kCFISO8601DateFormatWithWeekOfYear) == kCFISO8601DateFormatWithWeekOfYear;
+                    if (includesWeekOfYear == false) {
+                        CFStringAppendCString(resultStr, "yyyy", kCFStringEncodingUTF8);  // Year for calendar dates
+                    } else {
+                        CFStringAppendCString(resultStr, "YYYY", kCFStringEncodingUTF8);  // Year for week dates
+                    }
+                }
+                break;
+            case kCFISO8601DateFormatWithMonth:
+                if ((options & kCFISO8601DateFormatWithMonth) == kCFISO8601DateFormatWithMonth) {
+                    if ((firstFormatSymbol == false) && useDashSeparator) {
+                        CFStringAppendCString(resultStr, "-", kCFStringEncodingUTF8);
+                    }
+                    CFStringAppendCString(resultStr, "MM", kCFStringEncodingUTF8);
+                }
+                break;
+            case kCFISO8601DateFormatWithWeekOfYear:
+                if ((options & kCFISO8601DateFormatWithWeekOfYear) == kCFISO8601DateFormatWithWeekOfYear) {
+                    if ((firstFormatSymbol == false) && useDashSeparator) {
+                        CFStringAppendCString(resultStr, "-", kCFStringEncodingUTF8);
+                    }
+                    CFStringAppendCString(resultStr, "'W'ww", kCFStringEncodingUTF8);
+                }
+                break;
+            case kCFISO8601DateFormatWithDay:
+                if ((options & kCFISO8601DateFormatWithDay) == kCFISO8601DateFormatWithDay) {
+                    if ((firstFormatSymbol == false) && useDashSeparator) {
+                        CFStringAppendCString(resultStr, "-", kCFStringEncodingUTF8);
+                    }
+
+                    Boolean includesMonth = (options & kCFISO8601DateFormatWithMonth) == kCFISO8601DateFormatWithMonth;
+                    Boolean includesWeekOfYear = (options & kCFISO8601DateFormatWithWeekOfYear) == kCFISO8601DateFormatWithWeekOfYear;
+
+                    if (includesWeekOfYear == false) {
+                        if (includesMonth == false) {
+                            CFStringAppendCString(resultStr, "DDD", kCFStringEncodingUTF8);  // Day of Year
+                        } else {
+                            CFStringAppendCString(resultStr, "dd", kCFStringEncodingUTF8);  // Day of Month
+                        }
+                    } else {  // If week is included, we want to use the day local to that week.
+                        CFStringAppendCString(resultStr, "ee", kCFStringEncodingUTF8);  // Local day of week
+                    }
+                }
+                break;
+            case kCFISO8601DateFormatWithTime:
+                if ((options & kCFISO8601DateFormatWithTime) == kCFISO8601DateFormatWithTime) {
+                    if (firstFormatSymbol == false) { // This matters for T (or Space) character
+                        if (useSpaceInsteadOfTChar == false) {
+                            CFStringAppendCString(resultStr, "'T'", kCFStringEncodingUTF8);
+                        } else {
+                            CFStringAppendCString(resultStr, " ", kCFStringEncodingUTF8);
+                        }
+                    }
+                    // Check for colons
+                    if (useColonSeparatorInTime == false) {
+                        CFStringAppendCString(resultStr, "HHmmss", kCFStringEncodingUTF8);
+                    } else {
+                        CFStringAppendCString(resultStr, "HH:mm:ss", kCFStringEncodingUTF8);
+                    }
+                    // Add support for fractional seconds
+                    if (includeFractionalSecs) {
+                        CFStringAppendCString(resultStr, ".SSS", kCFStringEncodingUTF8);
+                    }
+                }
+                break;
+            case kCFISO8601DateFormatWithTimeZone:
+                if ((options & kCFISO8601DateFormatWithTimeZone) == kCFISO8601DateFormatWithTimeZone) {
+                    // Check for time zone separator
+                    if (useColonSeparatorInTimeZone == false) {
+                        CFStringAppendCString(resultStr, "XXXX", kCFStringEncodingUTF8);  // Basic Format (e.g. +080500)
+                    } else {
+                        CFStringAppendCString(resultStr, "XXXXX", kCFStringEncodingUTF8);  // Extended Format (e.g. +08:05:00)
+                    }
+                }
+                break;
+            default: break;
+        }
+    }
+
+    return resultStr;
+}
+
+CFDateFormatterRef CFDateFormatterCreateISO8601Formatter(CFAllocatorRef allocator, CFISO8601DateFormatOptions formatOptions) {
+    CFStringRef localeStr = CFStringCreateWithCString(kCFAllocatorSystemDefault, "en_US_POSIX", kCFStringEncodingUTF8);
+    if (localeStr == NULL) {
+        return NULL;
+    }
+    CFLocaleRef locale = CFLocaleCreate(kCFAllocatorSystemDefault, localeStr);
+    CFRelease(localeStr);
+    if (locale == NULL) {
+        return NULL;
+    }
+    CFDateFormatterRef ISO8601Formatter = __CFDateFormatterCreate(allocator, locale, kCFDateFormatterNoStyle, kCFDateFormatterNoStyle, kCFBooleanTrue);  // dateStyle and timeStyle are not relevant for ISO8601
+    CFRelease(locale);
+    if (ISO8601Formatter == NULL) {
+        return NULL;
+    }
+
+    if (formatOptions != 0) {
+        CFStringRef formatStr = __createISO8601FormatString(formatOptions);
+        if (formatStr) {
+            CFDateFormatterSetFormat(ISO8601Formatter, formatStr);
+            CFRelease(formatStr);
+        }
+    }
+
+    return ISO8601Formatter;
 }
 
 static void __substituteFormatStringFromPrefsDFRelative(CFDateFormatterRef formatter) {

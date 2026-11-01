@@ -76,7 +76,7 @@ NSNotificationName const NSSystemTimeZoneDidChangeNotification = @"kCFTimeZoneSy
 
 + (BOOL)supportsSecureCoding
 {
-    return NO;
+    return YES;
 }
 
 - (CFTypeID)_cfTypeID
@@ -331,6 +331,13 @@ static void NSTimeZoneCacheAdd(NSString *name, NSTimeZone *tz)
 @end
 
 @implementation __NSTimeZone
+
+- (id)copyWithZone:(NSZone *)zone
+{
+    (void)zone;
+    // NSTimeZone instances are immutable; a copy adopts the same time zone.
+    return [self retain];
+}
 
 - (NSString *)localizedName:(NSTimeZoneNameStyle)style locale:(NSLocale *)locale
 {
