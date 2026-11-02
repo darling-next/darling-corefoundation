@@ -1,3 +1,4 @@
 [submodule "submodules/swift-corelibs-foundation"]
 	path = submodules/swift-corelibs-foundation
-	url = ../darling-swift-corelibs-foundation.git
+	# Shared read-only upstream; the flat West project pins this same child.
+	url = https://github.com/darlinghq/darling-swift-corelibs-foundation.git
